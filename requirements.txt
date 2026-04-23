@@ -13,3 +13,4 @@ pandas
 python-dotenv
 tabulate
 openai
+tiktoken
