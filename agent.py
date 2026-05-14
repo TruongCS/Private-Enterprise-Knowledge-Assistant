@@ -2,7 +2,7 @@
 import re
 import sqlite3
 import pandas as pd
-from langchain_core.tools import tool 
+from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
@@ -33,13 +33,15 @@ def load_retriever():
     )
     dense_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-    with open(REPORT_PATH, "r", encoding="utf-8") as f:
-        text = re.sub(r'((?:\|.+\n)+)', '', f.read())
+    docs = list(vectorstore.docstore._dict.values())
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
-    )
-    docs = [Document(page_content=c) for c in splitter.split_text(text)]
+    if not docs:
+        with open(REPORT_PATH, "r", encoding="utf-8") as f:
+            text = re.sub(r'((?:\|.+\n)+)', '', f.read())
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+        )
+        docs = [Document(page_content=c) for c in splitter.split_text(text)]
     sparse_retriever = BM25Retriever.from_documents(docs)
     sparse_retriever.k = 3
 
