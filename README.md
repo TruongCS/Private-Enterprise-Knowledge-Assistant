@@ -18,7 +18,7 @@ The agent decides which tool to use depending on the question.
 
 ## Files
 
-- `FinancialAgent.ipynb`  
+- `Private_Enterprise_Knowledge_Assistant.ipynb`  
   Main Google Colab notebook. Runs PDF conversion, ingestion, vectorstore creation, SQLite extraction, and agent setup.
 
 - `Uber's_10-K_annual_report.pdf`  
