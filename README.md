@@ -56,3 +56,6 @@ streamlit run app.py
 
 You can also run the `Private_Enterprise_Knowledge_Assistant.ipynb` notebook
 from top to bottom to understand the original workflow.
+
+## System Architecture Diagram
+![System Architecture](images/architecture.png)
