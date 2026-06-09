@@ -20,12 +20,12 @@ from config import (
     CHUNK_SIZE, CHUNK_OVERLAP, OPENAI_API_KEY
 )
 import os
-
+import streamlit as st
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 
 # ── Retriever ────────────────────────────────────────────────
-
+@st.cache_resource
 def load_retriever():
     embedding   = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vectorstore = FAISS.load_local(
@@ -62,7 +62,13 @@ def retrieve_financial_context(query: str) -> str:
     results = hybrid_retriever.invoke(query)
     if not results:
         return "No relevant content found."
-    return "\n\n---\n\n".join(doc.page_content for doc in results)
+    
+    parts = []
+    for doc in results:
+        source = doc.metadata.get("source", "unknown")
+        parts.append(f"[Source: {source}]\n{doc.page_content}")
+    
+    return "\n\n---\n\n".join(parts)
 
 
 @tool
@@ -95,7 +101,8 @@ def search_tables_for_keyword(keyword: str) -> str:
             ).lower()
             if keyword.lower() in combined:
                 matches.append(f"{name}: columns = {df.columns.tolist()}")
-        except:
+        except Exception as e:
+            print(f"[search_tables_for_keyword] skipped table '{name}': {e}")
             continue
     con.close()
     return "\n".join(matches) if matches else f"No tables found containing '{keyword}'"
@@ -112,8 +119,10 @@ def query_financial_table(sql: str) -> str:
     try:
         df = pd.read_sql_query(sql, con)
         return "No rows returned." if df.empty else df.to_markdown(index=False)
+    except sqlite3.OperationalError as e:
+        return f"SQL error: {e}. Check the table name and column names are correct."
     except Exception as e:
-        return f"SQL error: {e}"
+        return f"Unexpected error running query: {e}"
     finally:
         con.close()
 
@@ -124,15 +133,36 @@ def calculate(expression: str) -> str:
     Only use this to derive NEW numbers — not to restate retrieved ones.
     Example: '(43978 - 37281) / 37281 * 100'"""
     if not re.match(r'^[\d\s\.\+\-\*\/\(\)\%]+$', expression):
-        return "Invalid expression."
+        return f"Invalid expression '{expression}'. Only use numbers and operators: + - * / ( ) %"
     try:
         result = eval(expression, {"__builtins__": {}})
         return str(round(result, 4))
+    except ZeroDivisionError:
+        return "Calculation error: division by zero."
     except Exception as e:
-        return f"Calculation error: {e}"
-
+        return f"Calculation error: {e}. Check the expression is valid arithmetic."
+@tool
+def lookup_registry(keyword: str) -> str:
+    """Look up the _registry table to find which table contains data about
+    a keyword. Always use this FIRST before search_tables_for_keyword.
+    Search for: 'revenue', 'income', 'segment', 'ebitda', 'cash'."""
+    con = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql_query("SELECT * FROM '_registry'", con)
+        keyword_lower = keyword.lower()
+        matches = df[
+            df.apply(lambda row: keyword_lower in row.astype(str).str.lower().values.any(), axis=1)
+        ]
+        if matches.empty:
+            return f"No tables found in registry for '{keyword}'"
+        return matches[["table_name", "heading", "columns", "sample"]].to_markdown(index=False)
+    except Exception as e:
+        return f"Registry lookup error: {e}"
+    finally:
+        con.close()
 
 tools = [
+    lookup_registry,              # ← add first so agent uses it first
     retrieve_financial_context,
     list_available_tables,
     search_tables_for_keyword,
@@ -140,30 +170,42 @@ tools = [
     calculate,
 ]
 
-
 # ── Agent ────────────────────────────────────────────────────
 
 system_prompt = """
 You are a precise financial analyst assistant specialising in Uber's annual report.
 
-You have five tools — use the right one for each job:
+You have six tools — use the right one for each job:
 
-- `list_available_tables`: see all table names (they are generic: table_0, table_1...).
-- `search_tables_for_keyword`: use this FIRST for any numerical question.
-  Search for 'revenue', 'income', 'ebitda', 'segment', 'cash' etc.
-- `query_financial_table`: once you know the table, query it with SELECT SQL.
-  Always run SELECT * FROM table LIMIT 3 first to inspect the schema.
-- `retrieve_financial_context`: for narrative questions only — strategy, risks,
-  business model. Not for specific numbers.
-- `calculate`: ONLY to derive new numbers (growth rates, ratios).
-  Never use it to restate a number already in the query result.
+- `lookup_registry`: use this FIRST for any numerical question.
+  It searches a registry table mapping table names to headings, columns and sample rows.
+  Search for: 'revenue', 'income', 'ebitda', 'segment', 'cash', 'expense' etc.
+- `search_tables_for_keyword`: fallback if lookup_registry finds nothing.
+  Scans all table contents directly for a keyword match.
+- `list_available_tables`: lists all table names in the database.
+  Use only if both lookup_registry and search_tables_for_keyword return nothing.
+- `query_financial_table`: once you know the table name, query it with SELECT SQL.
+  Always run SELECT * FROM table LIMIT 3 first to inspect the schema before a precise query.
+- `retrieve_financial_context`: for narrative questions ONLY — strategy, risks,
+  business model, qualitative descriptions. Never use for specific numbers.
+- `calculate`: ONLY to derive NEW numbers such as growth rates, ratios, and totals.
+  Never use it to restate a number already returned by a query result.
 
 Workflow for numerical questions:
-1. search_tables_for_keyword → find the right table
-2. SELECT * LIMIT 3 → inspect columns
-3. Precise SELECT → get the answer
-4. calculate → only if a new number needs to be derived
+1. lookup_registry → find the right table name, columns and a sample row
+2. SELECT * LIMIT 3 → confirm the schema
+3. Precise SELECT → get the exact answer
+4. calculate → only if a new number needs to be derived from retrieved values
 5. Report exact figures from the data. Never approximate or invent numbers.
+
+Workflow for narrative questions:
+1. retrieve_financial_context → search the report for relevant passages
+2. Summarise the retrieved passages accurately
+3. Never invent information not present in the retrieved context
+
+When answering, always mention the source of your information at the end.
+For numerical answers: (Source: table name, e.g. uber_report_consolidated_statements)
+For narrative answers: (Source: uber_report.md)
 """.strip()
 
 prompt = ChatPromptTemplate.from_messages([
@@ -187,7 +229,7 @@ agent_executor = AgentExecutor(
 
 # ── Memory helpers ───────────────────────────────────────────
 
-def ask(question: str, chat_history: list) -> tuple[str, list]:
+def ask(question: str, chat_history: list) -> tuple[str, list, list]:
     """Run a question through the agent, returns (answer, updated_history)."""
     response = agent_executor.invoke({
         "input": question,

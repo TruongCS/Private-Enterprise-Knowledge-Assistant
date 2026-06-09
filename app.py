@@ -59,14 +59,14 @@ if question:
                 question, st.session_state.chat_history
             )
 
-        # Show reasoning steps in expander
+        # Show reasoning steps
         if steps:
-            with st.expander("🔍 View reasoning", expanded=False):
+            with st.expander("🔍 View reasoning steps"):
                 for i, (action, observation) in enumerate(steps, 1):
                     st.markdown(f"**Step {i} — Tool: `{action.tool}`**")
                     st.code(str(action.tool_input), language="json")
                     st.markdown("**Result:**")
-                    st.code(str(observation)[:1000])  # cap long outputs
+                    st.code(str(observation)[:1000])
                     st.divider()
 
         st.write(answer)

@@ -21,6 +21,17 @@ The agent decides which tool to use depending on the question.
 - `Private_Enterprise_Knowledge_Assistant.ipynb`  
   Main Google Colab notebook. Runs PDF conversion, ingestion, vectorstore creation, SQLite extraction, and agent setup.
 
+- `ingest.py`  
+  Local ingestion script. Converts PDFs to Markdown, extracts tables into SQLite,
+  creates a `_registry` table for table discovery, and builds the FAISS
+  vectorstore with source/chunk metadata.
+
+- `app.py`  
+  Streamlit chat UI with reasoning-step display.
+
+- `agent.py`  
+  LangChain agent, hybrid FAISS/BM25 retriever, SQLite tools, calculator tool.
+
 - `Uber's_10-K_annual_report.pdf`  
   Original annual report PDF.
 
@@ -35,4 +46,13 @@ The agent decides which tool to use depending on the question.
 
 ## Workflow
 
-Please run the 'Private_Enterprise_Knowledge_Assistant.ipynb' notebook from top to bottom to understand workflow
+Install dependencies, rebuild the local data assets, then launch Streamlit:
+
+```bash
+pip install -r requirements.txt
+python ingest.py
+streamlit run app.py
+```
+
+You can also run the `Private_Enterprise_Knowledge_Assistant.ipynb` notebook
+from top to bottom to understand the original workflow.

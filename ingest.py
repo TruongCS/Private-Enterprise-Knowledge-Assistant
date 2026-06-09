@@ -42,6 +42,8 @@ def extract_tables_to_sqlite(markdown: str, db_path: str, source_name: str) -> N
     pattern = re.compile(r"(?:#{1,3}\s*(.+?)\n)?((?:\|.+\n)+)", re.MULTILINE)
     saved, skipped = 0, 0
     source_prefix = safe_name(Path(source_name).stem, "source")
+    
+    registry = []  # ← add this
 
     for i, match in enumerate(pattern.finditer(markdown)):
         heading = (match.group(1) or f"table_{i}").strip()
@@ -55,10 +57,7 @@ def extract_tables_to_sqlite(markdown: str, db_path: str, source_name: str) -> N
             skipped += 1
             continue
 
-        headers = [
-            safe_name(col, f"col_{j}")
-            for j, col in enumerate(rows[0])
-        ]
+        headers = [safe_name(col, f"col_{j}") for j, col in enumerate(rows[0])]
 
         seen, deduped = {}, []
         for header in headers:
@@ -69,7 +68,22 @@ def extract_tables_to_sqlite(markdown: str, db_path: str, source_name: str) -> N
         table_slug = safe_name(heading[:50], f"table_{i}")
         table_name = f"{source_prefix}_{table_slug}"
         df.to_sql(table_name, con, if_exists="replace", index=False)
+
+        # ← add this block after saving each table
+        registry.append({
+            "table_name": table_name,
+            "heading":    heading,
+            "source":     source_name,
+            "columns":    str(df.columns.tolist()),
+            "sample":     str(df.iloc[0].tolist()) if len(df) > 0 else ""
+        })
+
         saved += 1
+
+    # ← add this after the loop
+    if registry:
+        pd.DataFrame(registry).to_sql("_registry", con, if_exists="append", index=False)
+        print(f"Registry: saved {len(registry)} entries")
 
     con.close()
     print(f"SQLite: saved {saved} tables from {source_name}, skipped {skipped}")
